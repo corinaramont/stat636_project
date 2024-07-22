@@ -1,0 +1,204 @@
+---
+title: "STAT636 Project"
+author: "Xiaohan Wei, Qinye Jiang, Corina Ramont"
+date: "2023-11-11"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(caret)
+library(lattice)
+library(glmnet)
+library(class) # for knn()
+library(e1071) # to load up the e1071 library for `naiveBayes()`
+library(MASS) # to load up the MASS library for `lda()
+library(knitr)
+set.seed(1234) # setting seed for consistent results
+
+# function to reduce amount of output in final document
+hook_output <- knit_hooks$get("output")
+knit_hooks$set(output = function(x, options) {
+  lines <- options$output.lines
+  if (is.null(lines)) {
+    return(hook_output(x, options))  # pass to default hook
+  }
+  x <- unlist(strsplit(x, "\n"))
+  more <- "..."
+  if (length(lines)==1) {        # first n lines
+    if (length(x) > lines) {
+      # truncate the output, but add ....
+      x <- c(head(x, lines), more)
+    }
+  } else {
+    x <- c(more, x[lines], more)
+  }
+  # paste these lines together
+  x <- paste(c(x, ""), collapse = "\n")
+  hook_output(x, options)
+})
+```
+
+Step 1: import and clean the data
+```{r, output.lines = 10}
+# import data
+data = read.csv("data.csv")
+
+# First step: Code target response into categorical
+# Define the levels and labels; we only focus on dropout and not dropout
+levels = c("Dropout", "Graduate", "Enrolled")
+labels = c(1,0,0)
+
+# create a new column "outcome"
+data$outcome = factor(data$Target, levels=levels, labels=labels)
+data$outcome = as.numeric(data$outcome)
+data$outcome = data$outcome-1
+
+# drop original Target, create new dataset
+dat = subset(data, select=-Target)
+
+# Summarize dat
+summary(dat)
+
+
+```
+
+Step 2: splitting data into training and testing datasets
+```{r}
+index = createDataPartition(y = dat$outcome, p = 0.8, list = F)
+
+train = dat[index, ]
+test = dat[-index, ]
+```
+
+Step 3: Compare different classification models
+
+Step 3.1: LDA
+```{r}
+# performing LDA on the training set of data
+
+lda.fit = lda(outcome ~ ., data = train)
+
+lda.fit # summary of the obtained LDA
+
+# To determine the test error of the model obtained
+lda.pred = predict(lda.fit, test) # Using the LDA model to predict through the test data
+lda.class = lda.pred$class # predicted `outcome` based in the fitted LDA
+
+table(lda.class, test$outcome) # confusion matrix
+
+test_err.lda = mean(lda.class != test$outcome) # test error
+test_err.lda
+```
+
+Test error for LDA is 0.1504525.
+
+Step 3.2: QDA
+```{r}
+qda.fit = qda(outcome ~ ., data = train)
+
+qda.fit # summary of the obtained QDA
+
+# To determine the test error of the model obtained
+
+qda.pred = predict(qda.fit, test) # Using the QDA model to predict through the test data
+qda.class = qda.pred$class # predicted `mpg01` based in the fitted QDA
+
+table(qda.class, test$outcome) # confusion matrix
+
+test_err.qda = mean(qda.class != test$outcome) # test error
+test_err.qda
+```
+
+Test error for QDA is 0.1753394.
+
+Step 3.3: Logistic regression
+```{r}
+logistic.fit = glm(outcome ~ ., 
+                   data = train,
+                   family = binomial)
+
+summary(logistic.fit) # summary of the logistic regression model
+
+# To determine the test error of the model obtained
+# storing the predicted values of `outcome` from the fitted logistic regression
+logistic.pred = ifelse(predict(logistic.fit, type = "response", test) > 0.32, 1, 0) 
+table(logistic.pred, test$outcome) # confusion matrix
+
+test_err.logistic = mean(logistic.pred != test$outcome) # test error
+test_err.logistic
+```
+
+Test error for LR is 0.1504525
+
+Step 3.4: naive Bayes
+```{r}
+# performing naive Bayes on the training set of data
+nb.fit = naiveBayes(outcome ~ ., 
+                    data = train)
+
+nb.fit # summary of the obtained naive Bayes model
+
+# To determine the test error of the model obtained
+nb.class = predict(nb.fit, test) # Using the naive Bayes model to predict through the test data
+
+test_err.nb = mean(nb.class != test$outcome) # test error
+test_err.nb
+```
+
+Test error for NB is 0.1900452
+
+Step 3.5: KNN
+```{r}
+# separate original training data into a training and tuning set for KNN
+# overall percentages: 60% training, 20% tuning, 20% testing
+index2 = createDataPartition(y = train$outcome, p = 0.25, list = F)
+knn_train = train[-index2,]
+knn_tune = train[index2,]
+knn_test = test 
+
+c1 = as.factor(knn_train$outcome)
+
+# performing KNN for different values of K on the training set
+n = 10 # total number of choices for K
+test_err.knn = array(0) # to store the test errors for different values of K
+
+for(j in 1:n){
+  knn.fit = knn(knn_train, knn_tune, c1, k = j) # fitting the KNN model with K = j
+  test_err.knn[j] = mean(knn.fit != knn_tune$outcome) # test error for the jth value of K
+}
+
+# plotting the test errors for different values of K for which the KNN has been fitted
+plot(1:n, test_err.knn, type = "b", cex = 0.3, col = "violet",
+     xlab = "K", ylab = "Test Errors", main = "Test Errors vs. Different K Values")
+
+```
+```{r}
+# fitting the KNN model with K = 5
+knn.fit.final = knn(knn_train, knn_test, c1, k = 5) 
+# test error for K = 5 on testing set
+err.knn = mean(knn.fit.final != knn_test$outcome) 
+err.knn
+```
+
+Test error for KNN (K=5) is 0.2567873.
+
+Step 4: visualize all test errors
+```{r}
+### Test error
+test_error = c(test_err.lda, test_err.qda, test_err.logistic, 
+                test_err.nb, err.knn)
+model_names = c("LDA", "QDA", "Logistic", "NB", "KNN")
+my_colors1 = c("#85144b", "#9B1F5A", "#B0296F", "#C62D85", "#DB2E8C",
+                         "#FF69B4", "#FFADD8", "#FFC1E0", "#FFD1E7", "#FFE5F2")
+barplot(test_error, col=my_colors1, names.arg=model_names, 
+        xlab="Model", ylab="Test Error", ylim=c(0, max(test_error)*1.5),
+        main = "Test Errors of Methods")
+text(x = seq(from=0.7, to=12, by=1.2), y = test_error + 0.05, 
+     labels = round(test_error, 3),col = "black")
+```
+
+The smallest test error is 0.15 from LDA and logistic.
+
+
